@@ -40,8 +40,8 @@ class DominoGame {
         this.myDeck = [];
         this.listOfBotsDecks = [];
         this.lastPlayedPosition = null;
-        this.textFadeStep = 0;
         this.textMessage = null;
+        this.textStartTime = null;
         this.hoveredCard = null;
     }
 
@@ -339,17 +339,21 @@ class DominoGame {
         }
 
         // Draw text message if exists
-        if (this.textMessage && this.textFadeStep < 30) {
-            const alpha = 1 - (this.textFadeStep / 30);
-            const greenValue = Math.floor(255 * alpha);
-            this.ctx.fillStyle = `rgb(0, ${greenValue}, 0)`;
-            this.ctx.font = "bold 40px Arial";
-            this.ctx.textAlign = "center";
-            this.ctx.fillText(this.textMessage, domino.DOMINOWIDTH * 10, domino.DOMINOWIDTH * 4);
-            this.textFadeStep++;
-        } else if (this.textFadeStep >= 30) {
-            this.textMessage = null;
-            this.textFadeStep = 0;
+        if (this.textMessage && this.textStartTime) {
+            const elapsed = Date.now() - this.textStartTime;
+            const fadeDuration = 3000; // 2 seconds
+            
+            if (elapsed < fadeDuration) {
+                const alpha = 1 - (elapsed / fadeDuration);
+                const greenValue = Math.floor(255 * alpha);
+                this.ctx.fillStyle = `rgb(0, ${greenValue}, 0)`;
+                this.ctx.font = "bold 40px Arial";
+                this.ctx.textAlign = "center";
+                this.ctx.fillText(this.textMessage, domino.DOMINOWIDTH * 10, domino.DOMINOWIDTH * 4);
+            } else {
+                this.textMessage = null;
+                this.textStartTime = null;
+            }
         }
 
         return this;
@@ -654,8 +658,16 @@ class DominoGame {
                         this.updateLand();
                     } else {
                         this.textMessage = `PLAYER ${turn + 1}: PASS`;
-                        this.textFadeStep = 0;
-                        this.updateLand();
+                        this.textStartTime = Date.now();
+                        
+                        // Start animation loop for smooth fade
+                        const animateText = () => {
+                            if (this.textMessage) {
+                                this.updateLand();
+                                requestAnimationFrame(animateText);
+                            }
+                        };
+                        requestAnimationFrame(animateText);
                     }
                     await this.delay(1500);
                 }
