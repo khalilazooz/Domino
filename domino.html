@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Domino Game</title>
+    <style>
+        /* Basic styling for the game board */
+        body { margin: 0; background-color: #333; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        canvas { border: 1px solid #fff; background-color: #006400; /* Dark green felt */ }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="1024" height="768"></canvas>
+
+    <script src="domino.js"></script>
+    <!-- <script>
+        const canvas = document.getElementById("gameCanvas");
+        for( i =0 ; i < 7 ; i++)
+        {
+            for (j=0 ;j <= i; j++)
+            {
+                const d1 = new domino(i, j, canvas).setVirtical().setCoordinates((i * (domino.DOMINOHIGHT+2) ), j*(domino.DOMINOWIDTH+2) );
+                d1.build();
+
+                const d2 = new domino(i, j, canvas).setHorizontal().setCoordinates(1024 - (i * (domino.DOMINOWIDTH+2) ), 768 - j*(domino.DOMINOHIGHT+2) );
+                d2.build();
+            }
+        }
+        
+    </script> -->
+    <script src="GameEngine.js"></script> 
+</body>
+</html>
+
