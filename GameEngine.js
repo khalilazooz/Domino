@@ -43,6 +43,7 @@ class DominoGame {
         this.textMessage = null;
         this.textStartTime = null;
         this.hoveredCard = null;
+        this.passedMoves=[]
     }
 
     createGameBoard() {
@@ -189,7 +190,6 @@ class DominoGame {
         if (this.gameCards.length > 0) {
             throw new Error("Should Distribute Game Cards first");
         }
-
         // Clear canvas
         this.ctx.clearRect(0, 0, this.boardWidth, this.boardHeight);
 
@@ -341,12 +341,12 @@ class DominoGame {
         // Draw text message if exists
         if (this.textMessage && this.textStartTime) {
             const elapsed = Date.now() - this.textStartTime;
-            const fadeDuration = 3000; // 2 seconds
+            const fadeDuration = 3000; // 3 seconds
             
             if (elapsed < fadeDuration) {
                 const alpha = 1 - (elapsed / fadeDuration);
                 const greenValue = Math.floor(255 * alpha);
-                this.ctx.fillStyle = `rgb(0, ${greenValue}, 0)`;
+                this.ctx.fillStyle = `rgb(${greenValue}, ${greenValue}, ${greenValue})`;
                 this.ctx.font = "bold 40px Arial";
                 this.ctx.textAlign = "center";
                 this.ctx.fillText(this.textMessage, domino.DOMINOWIDTH * 10, domino.DOMINOWIDTH * 4);
@@ -383,17 +383,25 @@ class DominoGame {
         }
         return null;
     }
-
+    ifItHasRightValue(card)
+    {
+        const rightValue = this.landCards[0].value[0];
+        return card.value.includes(rightValue)
+    }
+    ifItHasLeftValue(card)
+    {
+        const leftValue = this.landCards[this.landCards.length - 1].value[1];
+        return card.value.includes(leftValue)
+    }
     getLegalMoves(card) {
         if (!card) return 0;
         if (this.landCards.length === 0) return 1;
         
         let moves = 0;
-        const leftValue = this.landCards[0].value[0];
         const rightValue = this.landCards[this.landCards.length - 1].value[1];
         
-        if (card.value.includes(leftValue)) moves++;
-        if (card.value.includes(rightValue)) moves++;
+        if (this.ifItHasLeftValue(card)) moves++;
+        if (this.ifItHasRightValue(card)) moves++;
         
         return moves;
     }
@@ -536,6 +544,176 @@ class DominoGame {
             this.canvas.style.cursor = "default";
         }
     }
+    getWinProbability(evalScore, scale = 15) {
+        // Clamp eval to a reasonable range
+        const clamped = Math.max(-100, Math.min(100, evalScore));
+
+        // Convert using logistic function
+        const winProb = 1 / (1 + Math.exp(-clamped / scale));
+
+        // Convert to percentage
+        return (winProb * 100).toFixed(1);
+    }
+    getAllLegalMovesForBot(gameState, botIndex) {
+        const moves = [];
+        for (const card of gameState.listOfBotsDecks[botIndex]) {
+            if (gameState.ifItHasLeftValue(card))
+                moves.push({ card, side: "left" });
+            if (gameState.ifItHasRightValue(card))
+                moves.push({ card, side: "right" });
+        }
+        return moves;
+    }
+
+    getAllLegalMovesForPlayer(gameState) {
+        const moves = [];
+        for (const card of gameState.myDeck) {
+            if (gameState.ifItHasLeftValue(card))
+                moves.push({ card, side: "left" });
+            if (gameState.ifItHasRightValue(card))
+                moves.push({ card, side: "right" });
+        }
+        return moves;
+    }
+
+    evaluateBoard(gameState, botIndex) {
+        const botDeck = gameState.listOfBotsDecks[botIndex];
+        const playerDeck = gameState.myDeck;
+
+        // 1️⃣ Tile counts (fewer is better)
+        const tileAdvantage = (playerDeck.length - botDeck.length) * 10;
+
+        // 2️⃣ Total pips (lower is better)
+        const pipAdvantage = (this.getCount(playerDeck) - this.getCount(botDeck)) * 1;
+
+        // 3️⃣ Playable moves
+        const botMoves = this.getAllLegalMovesForBot(gameState, botIndex).length;
+        const playerMoves = this.getAllLegalMovesForPlayer(gameState).length;
+        const moveAdvantage = (botMoves - playerMoves) * 5;
+
+        // 4️⃣ Doubles (optional tiebreaker)
+        const botDoubles = botDeck.filter(c => c.value[0] === c.value[1]).length;
+        const playerDoubles = playerDeck.filter(c => c.value[0] === c.value[1]).length;
+        const doubleAdvantage = (botDoubles - playerDoubles) * 2;
+
+        // Final weighted evaluation
+        const totalEval = tileAdvantage + pipAdvantage + moveAdvantage + doubleAdvantage;
+
+        return totalEval;
+    }
+
+    cloneGameState() {
+        const clone = Object.assign(Object.create(Object.getPrototypeOf(this)), this);
+        clone.landCards = this.landCards.map(c => new domino(c.value[0], c.value[1], this.canvas));
+        clone.myDeck = this.myDeck.map(c => new domino(c.value[0], c.value[1], this.canvas));
+        clone.listOfBotsDecks = this.listOfBotsDecks.map(deck =>
+            deck.map(c => new domino(c.value[0], c.value[1], this.canvas))
+        );
+        clone.outCards = this.outCards.map(c => new domino(c.value[0], c.value[1], this.canvas));
+        return clone;
+    }
+    minimax(gameState, depth, isMaximizing, botIndex) {
+        const result = gameState.getGameEnded();
+
+        // Base cases
+        if (result === "lost") return -100 + depth; // losing state
+        if (result === "won") return 100 - depth;  // winning state
+        if (depth >= 3) return this.evaluateBoard(gameState, botIndex); // deeper search limit
+
+        const legalMoves = isMaximizing
+            ? this.getAllLegalMovesForBot(gameState, botIndex)
+            : this.getAllLegalMovesForPlayer(gameState);
+
+        // If no moves available
+        if (legalMoves.length === 0) {
+            // Penalize slightly if bot can't move, reward if player can't
+            return isMaximizing ? -20 + depth : 20 - depth;
+        }
+
+        let bestEval = isMaximizing ? -Infinity : Infinity;
+        const moveScores = [];
+
+        for (const move of legalMoves) {
+            const newState = gameState.cloneGameState();
+            newState.addCardToLand(move.card, move.side);
+
+            if (isMaximizing)
+                newState.listOfBotsDecks[botIndex] = newState.listOfBotsDecks[botIndex].filter(c => c !== move.card);
+            else
+                newState.myDeck = newState.myDeck.filter(c => c !== move.card);
+
+            const evalScore = this.minimax(newState, depth + 1, !isMaximizing, botIndex);
+            moveScores.push(evalScore);
+
+            if (isMaximizing)
+                bestEval = Math.max(bestEval, evalScore);
+            else
+                bestEval = Math.min(bestEval, evalScore);
+        }
+
+        // Stability smoothing: if all scores are very close, return near 0
+        const maxScore = Math.max(...moveScores);
+        const minScore = Math.min(...moveScores);
+        const spread = maxScore - minScore;
+        if (spread < 5) {
+            bestEval = bestEval / 2; // dampen wild swings
+        }
+
+        // Clamp to safe range (-100 → 100)
+        if (bestEval > 100) bestEval = 100;
+        if (bestEval < -100) bestEval = -100;
+
+        // Apply depth weighting (prefer earlier good results)
+        const depthWeight = 1 / (depth + 1);
+        return bestEval * depthWeight;
+    }
+
+    PlayBestMove(botIndex, listOfAllLegalMoves) {
+        if (!listOfAllLegalMoves || listOfAllLegalMoves.length === 0) {
+            // No legal move → draw from outCards if possible
+            if (this.outCards.length > 0) {
+                this.listOfBotsDecks[botIndex].push(this.outCards.shift());
+                this.outCount--;
+                this.noPlayCount++;
+            } else {
+                // Pass
+                this.noPlayCount++;
+            }
+            return;
+        }
+
+        let bestScore = -Infinity;
+        let bestMove = null;
+
+        for (const move of listOfAllLegalMoves) {
+            const gameCopy = this.cloneGameState();
+
+            gameCopy.addCardToLand(move.card, move.side);
+            gameCopy.listOfBotsDecks[botIndex] = gameCopy.listOfBotsDecks[botIndex].filter(c => c.value[0] !== move.card.value[0] || c.value[1] !== move.card.value[1]);
+
+            const score = this.minimax(gameCopy, 0, false, botIndex);
+            if (score > bestScore) {
+                bestScore = score;
+                bestMove = move;
+            }
+        }
+        console.log(`Bot ${botIndex + 1} played ${bestMove.card.value} on ${bestMove.side}, eval: ${bestScore.toFixed(2)}, probability to win: ${this.getWinProbability(bestScore)}`);
+
+
+        // If somehow no best move found, fallback to random legal move
+        if (!bestMove) {
+            const randomIndex = Math.floor(Math.random() * listOfAllLegalMoves.length);
+            bestMove = listOfAllLegalMoves[randomIndex];
+        }
+
+        // Play the selected move
+        this.addCardToLand(bestMove.card, bestMove.side);
+        this.listOfBotsDecks[botIndex] = this.listOfBotsDecks[botIndex].filter(
+            c => c.value[0] !== bestMove.card.value[0] || c.value[1] !== bestMove.card.value[1]
+        );
+        this.updatePlayersCount(botIndex, this.listOfBotsDecks[botIndex].length);
+        this.noPlayCount = 0;
+    }
 
     // ------------------------------
     // Computer player logic
@@ -543,20 +721,31 @@ class DominoGame {
     pcPlay(turn) {
         let played = false;
         const botIndex = turn - 1;
-
+        let haveLegalMoves=false
         while (!played) {
+            let listOfAllLegalMoves=[]
             // Try to play any legal card
             for (const element of [...this.listOfBotsDecks[botIndex]]) {
                 if (this.getLegalMoves(element) > 0) {
-                    this.addCardToLand(element, null);
-                    this.listOfBotsDecks[botIndex] = this.listOfBotsDecks[botIndex].filter(c => c !== element);
-                    this.updatePlayersCount(botIndex, this.listOfBotsDecks[botIndex].length);
-                    played = true;
-                    this.noPlayCount = 0;
-                    break;
+                    haveLegalMoves = true;
+                    if(this.ifItHasLeftValue(element))
+                    {
+                        listOfAllLegalMoves.push({card: element, side: "left"})
+                    }
+                    if(this.ifItHasRightValue(element))
+                    {
+                        listOfAllLegalMoves.push({card: element, side: "right"})
+                    }
                 }
             }
 
+
+            if(haveLegalMoves)
+            {
+                this.PlayBestMove(botIndex, listOfAllLegalMoves)
+                played = true;
+            }
+            
             // If out cards exhausted, stop trying draws
             if (this.outCards.length === 0) {
                 if (!played) {
@@ -583,10 +772,6 @@ class DominoGame {
         return deck.reduce((sum, card) => sum + card.value[0] + card.value[1], 0);
     }
 
-    showCards() {
-        this.updateLand(true);
-    }
-
     async waitForMyTurn() {
         if (this.lock) return;
 
@@ -598,7 +783,7 @@ class DominoGame {
             if (this.gameType === "Local") {
                 winValue = this.listOfBotsDecks.reduce((sum, deck) => sum + this.getCount(deck), 0);
             }
-            this.showCards();
+            this.updateLand(true);
             await this.delay(500);
             alert(`Game End - You Won (${winValue})`);
             const count = this.gamePlayersCount;
@@ -609,7 +794,7 @@ class DominoGame {
 
         if (gameEnd === "lost") {
             this.lock = true;
-            this.showCards();
+            this.updateLand(true);
             await this.delay(500);
             alert("Game End - You Lost");
             const count = this.gamePlayersCount;
@@ -630,7 +815,7 @@ class DominoGame {
                 othersMin = Math.min(othersMin, ...otherCounts);
             }
             
-            this.showCards();
+            this.updateLand(true);
             await this.delay(500);
             
             if (myCount < othersMin) {
@@ -676,10 +861,33 @@ class DominoGame {
         }
 
         // Player's turn - check if player has any legal move
+        // Player's turn - check if player has any legal move
         const exist = this.myDeck.some(card => this.getLegalMoves(card) > 0);
-        if (!exist && this.outCards.length === 0) {
-            this.noPlayCount++;
-            this.turn = (this.turn + 1) % this.gamePlayersCount;
+
+        if (!exist) {
+            if (this.outCards.length > 0) {
+                // Draw one card from the pile
+                this.myDeck.push(this.outCards.shift());
+                this.outCount--;
+                this.updateLand();
+            } else {
+                // Show PASS message (same visual as bot)
+                this.textMessage = "YOU: PASS";
+                this.textStartTime = Date.now();
+
+                // Trigger the text fade animation
+                const animateText = () => {
+                    if (this.textMessage) {
+                        this.updateLand();
+                        requestAnimationFrame(animateText);
+                    }
+                };
+                requestAnimationFrame(animateText);
+
+                // No card to play, increase pass count and move turn
+                this.noPlayCount++;
+                this.turn = (this.turn + 1) % this.gamePlayersCount;
+            }
         }
     }
 
